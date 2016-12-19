@@ -38,13 +38,13 @@ func main() {
 		log.Fatalln("Error: ", err)
 	}
 
-	migrate(influxClient, mysqlClient, 1000, "select timestamp, reading from counter_event where counter_id=1", "gas_usage")
-	migrate(influxClient, mysqlClient, 1, "select timestamp, reading from thermometer_reading where thermometer_id=1", "temperature_air")
-	migrate(influxClient, mysqlClient, 1, "select timestamp, reading from thermometer_reading where thermometer_id=2", "temperature_boiler")
-	migrate(influxClient, mysqlClient, 1, "select timestamp, reading from thermometer_reading where thermometer_id=3", "temperature_hot_water_tank")
-	migrate(influxClient, mysqlClient, 1, "select timestamp, reading from thermometer_reading where thermometer_id=4", "temperature_test_1")
-	migrate(influxClient, mysqlClient, 1, "select timestamp, reading from thermometer_reading where thermometer_id=5", "temperature_test_2")
-	migrate(influxClient, mysqlClient, 1, "select timestamp, reading from thermometer_reading where thermometer_id=6", "temperature_test_3")
+//	migrate(influxClient, mysqlClient, 1000, "select timestamp, reading from counter_event where counter_id=1", "gas_usage")
+//	migrate(influxClient, mysqlClient, 1000, "select timestamp, reading from thermometer_reading where thermometer_id=1", "temperature_air")
+	migrate(influxClient, mysqlClient, 1000, "select timestamp, reading from thermometer_reading where thermometer_id=2", "temperature_boiler")
+	migrate(influxClient, mysqlClient, 1000, "select timestamp, reading from thermometer_reading where thermometer_id=3", "temperature_hot_water_tank")
+	migrate(influxClient, mysqlClient, 1000, "select timestamp, reading from thermometer_reading where thermometer_id=4", "temperature_boiler_room")
+	migrate(influxClient, mysqlClient, 1000, "select timestamp, reading from thermometer_reading where thermometer_id=5", "temperature_hallway_1")
+	migrate(influxClient, mysqlClient, 1000, "select timestamp, reading from thermometer_reading where thermometer_id=6", "temperature_hallway_2")
 	migrate(influxClient, mysqlClient, 1, "select timestamp, state from flag_state where flag_id=1", "flag_hot_water_circulation_pump_active")
 	migrate(influxClient, mysqlClient, 1, "select timestamp, state from flag_state where flag_id=2", "flag_heating_winter")
 	migrate(influxClient, mysqlClient, 1, "select timestamp, state from flag_state where flag_id=3", "flag_heating_circulation_pump_active")
@@ -55,22 +55,8 @@ func main() {
 
 func migrate(influxClient client.Client, mysqlClient *sql.DB, divisor int, query string, seriesName string) error {
 
-	fmt.Println("Remove old data")
-	_, err := queryDB(influxClient, "DROP SERIES FROM " + seriesName)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Create batch")
-
-	// Create a new point batch
-	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
-		Database:  influxDbName,
-		Precision: "ms",
-	})
-	if err != nil {
-		return err
-	}
+	fmt.Println("Remove old data " + seriesName)
+	queryDB(influxClient, "DROP MEASUREMENT " + seriesName)
 
 	rows, err := mysqlClient.Query(query)
 	if err != nil {
@@ -79,18 +65,32 @@ func migrate(influxClient client.Client, mysqlClient *sql.DB, divisor int, query
 	defer rows.Close()
 
 	for rows.Next() {
+
+        	// Create a new point batch
+	        bp, err := client.NewBatchPoints(client.BatchPointsConfig{
+                	Database:  influxDbName,
+        	        Precision: "ms",
+	        })
+	        if err != nil {
+        	        return err
+	        }
+
 		var sqlTimestamp int64
-		var reading int
+		var reading float64
 		err = rows.Scan(&sqlTimestamp, &reading)
 		if err != nil {
 			log.Fatalln(err, "Error scanning rows")
 			return err
 		}
 
+		value := reading / float64(divisor)
+
+	       //fmt.Printf("Value %f\n", value)	
+
 		// Create a point and add to batch
 		tags := map[string]string{}
 		fields := map[string]interface{}{
-			"value": reading / divisor,
+			"value": value,
 		}
 		timestamp := time.Unix(0, int64(sqlTimestamp) * 1000000)
 
@@ -101,14 +101,16 @@ func migrate(influxClient client.Client, mysqlClient *sql.DB, divisor int, query
 
 		bp.AddPoint(pt)
 
-	}
+        	fmt.Println("Writing batch")
 
-	fmt.Println("Writing batch")
+	        // Write the batch
+        	err = influxClient.Write(bp)
+	        if err != nil {
+                	log.Fatalln(err, "Error writing batch ")
+        	        return err
+	        }
 
-	// Write the batch
-	err = influxClient.Write(bp)
-	if err != nil {
-		return err
+
 	}
 
 	return nil
